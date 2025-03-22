@@ -51,7 +51,10 @@ export class QdrantDBProvider extends BaseCloudDBProvider {
     const qdrantHost = settings.qdrantUrl || "";
     this.qdrantApiKey = settings.qdrantApiKey || "";
     this.baseUrl = `${qdrantHost}`; // Adjust as needed
-    this.collectionBaseUrl = `${this.baseUrl}/collections/${this.collectionName}`;
+    this.collectionBaseUrl = `${this.baseUrl}/collections/${this.collectionName}`.replace(
+      /(?<!http:|https:)\/\//g,
+      "/"
+    );
 
     try {
       await this.loadMetadata();
