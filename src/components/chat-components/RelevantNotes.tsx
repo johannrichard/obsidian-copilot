@@ -11,6 +11,7 @@ import {
   RelevantNoteEntry,
 } from "@/search/findRelevantNotes";
 import VectorStoreManager from "@/search/vectorStoreManager";
+import { VectorSearchService } from "@/search/vectorSearchService";
 import {
   ArrowRight,
   ChevronDown,
@@ -33,9 +34,19 @@ function useRelevantNotes(refresher: number) {
   useEffect(() => {
     async function fetchNotes() {
       if (!activeFile?.path) return;
-      const db = await VectorStoreManager.getInstance().getDb();
-      const notes = await findRelevantNotes({ db, filePath: activeFile.path });
-      setRelevantNotes(notes);
+
+      try {
+        // Get the provider from VectorSearchService
+        const searchService = VectorSearchService.getInstance(app);
+        const provider = searchService.getProvider();
+
+        // Use the provider with findRelevantNotes
+        const notes = await findRelevantNotes({ provider, filePath: activeFile.path });
+        setRelevantNotes(notes);
+      } catch (error) {
+        console.error("Error fetching relevant notes:", error);
+        setRelevantNotes([]);
+      }
     }
     fetchNotes();
   }, [activeFile?.path, refresher]);

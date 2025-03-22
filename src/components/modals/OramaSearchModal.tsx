@@ -44,7 +44,7 @@ export class OramaSearchModal extends Modal {
       }
 
       try {
-        const dbOps = await this.plugin.vectorStoreManager.getDbOps();
+        const dbOps = await this.plugin.vectorStoreManager.getDbProvider();
         const results = await dbOps.getDocsJsonByPaths(notePaths);
 
         // Create or overwrite file with results

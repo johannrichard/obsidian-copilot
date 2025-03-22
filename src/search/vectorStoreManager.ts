@@ -3,7 +3,8 @@ import EmbeddingsManager from "@/LLMProviders/embeddingManager";
 import { CopilotSettings, getSettings, subscribeToSettingsChange } from "@/settings/model";
 import { Orama } from "@orama/orama";
 import { Notice, Platform, TFile } from "obsidian";
-import { DBOperations } from "./dbOperations";
+import { DBProvider } from "./dbProvider";
+import DBOperationsManager from "./dbOperationsManager";
 import { IndexEventHandler } from "./indexEventHandler";
 import { IndexOperations } from "./indexOperations";
 
@@ -14,11 +15,11 @@ export default class VectorStoreManager {
   private initializationPromise: Promise<void>;
   private lastKnownSettings: CopilotSettings | undefined;
   private embeddingsManager: EmbeddingsManager;
-  private dbOps: DBOperations;
+  private dbOps: DBProvider;
 
   private constructor() {
     this.embeddingsManager = EmbeddingsManager.getInstance();
-    this.dbOps = new DBOperations(app);
+    this.dbOps = DBOperationsManager.getInstance(app).getProvider();
     this.indexOps = new IndexOperations(app, this.dbOps, this.embeddingsManager);
     this.eventHandler = new IndexEventHandler(app, this.indexOps, this.dbOps);
 
@@ -50,6 +51,13 @@ export default class VectorStoreManager {
         if (oldPath !== newPath) {
           await this.dbOps.initializeDB(await this.embeddingsManager.getEmbeddingsAPI());
         }
+      }
+
+      if (settings.vectorDbType !== prevSettings?.vectorDbType) {
+        // Update IndexOperations and IndexEventHandler if the vectorDbType has changed
+        this.dbOps = DBOperationsManager.getInstance(app).getProvider();
+        this.indexOps = new IndexOperations(app, this.dbOps, this.embeddingsManager);
+        this.eventHandler = new IndexEventHandler(app, this.indexOps, this.dbOps);
       }
     };
 
@@ -104,7 +112,7 @@ export default class VectorStoreManager {
 
   public async clearIndex(): Promise<void> {
     await this.waitForInitialization();
-    await this.dbOps.clearIndex(await this.embeddingsManager.getEmbeddingsAPI());
+    await this.dbOps.recreateIndex(await this.embeddingsManager.getEmbeddingsAPI());
   }
 
   public async garbageCollectVectorStore(): Promise<number> {
@@ -132,7 +140,7 @@ export default class VectorStoreManager {
     this.dbOps.onunload();
   }
 
-  public async getDbOps(): Promise<DBOperations> {
+  public async getDbProvider(): Promise<DBProvider> {
     await this.waitForInitialization();
     return this.dbOps;
   }

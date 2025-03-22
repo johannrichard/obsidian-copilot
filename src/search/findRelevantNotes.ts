@@ -1,8 +1,8 @@
 import { getBacklinkedNotes, getLinkedNotes } from "@/noteUtils";
-import { DBOperations } from "@/search/dbOperations";
 import { getSettings } from "@/settings/model";
-import { InternalTypedDocument, Orama, Result } from "@orama/orama";
 import { TFile } from "obsidian";
+import { DBProvider } from "./dbProvider";
+import { Document } from "@langchain/core/documents";
 
 const MIN_SIMILARITY_SCORE = 0.4;
 const MAX_K = 20;
@@ -12,30 +12,36 @@ const LINKS_WEIGHT = 0.3;
 /**
  * Gets the embeddings for the given note path.
  * @param notePath - The note path to get embeddings for.
- * @param db - The Orama database.
+ * @param provider - The vector database provider.
  * @returns The embeddings for the given note path.
  */
-async function getNoteEmbeddings(notePath: string, db: Orama<any>): Promise<number[][]> {
+async function getNoteEmbeddings(notePath: string, provider: DBProvider): Promise<number[][]> {
   const debug = getSettings().debug;
-  const hits = await DBOperations.getDocsByPath(db, notePath);
-  if (!hits) {
-    if (debug) {
-      console.log("No hits found for note:", notePath);
+
+  try {
+    const results = await provider.getDocsByPath(notePath);
+    if (!results || results.length === 0) {
+      if (debug) {
+        console.log("No results found for note:", notePath);
+      }
+      return [];
     }
+
+    const embeddings: number[][] = [];
+    for (const doc of results) {
+      if (!doc?.embedding) {
+        if (debug) {
+          console.log("No embedding found for note:", notePath);
+        }
+        continue;
+      }
+      embeddings.push(doc.embedding);
+    }
+    return embeddings;
+  } catch (error) {
+    console.error(`Error getting embeddings for note ${notePath}:`, error);
     return [];
   }
-
-  const embeddings: number[][] = [];
-  for (const hit of hits) {
-    if (!hit?.document?.embedding) {
-      if (debug) {
-        console.log("No embedding found for note:", notePath);
-      }
-      continue;
-    }
-    embeddings.push(hit.document.embedding);
-  }
-  return embeddings;
 }
 
 /**
@@ -61,20 +67,23 @@ function getAverageEmbedding(noteEmbeddings: number[][]): number[] {
 /**
  * Gets the highest score hits for each note and removes the current file path
  * from the results.
- * @param hits - The hits to get the highest score for.
+ * @param results - The search results.
  * @param currentFilePath - The current file path.
  * @returns A map of the highest score hits for each note.
  */
-function getHighestScoreHits(hits: Result<InternalTypedDocument<any>>[], currentFilePath: string) {
+function getHighestScoreHits(results: Document[], currentFilePath: string) {
   const hitMap = new Map<string, number>();
-  for (const hit of hits) {
-    const matchingScore = hitMap.get(hit.document.path);
-    if (matchingScore) {
-      if (hit.score > matchingScore) {
-        hitMap.set(hit.document.path, hit.score);
+  for (const doc of results) {
+    const path = doc.metadata.path as string;
+    const score = (doc.metadata.score as number) || 0;
+
+    const matchingScore = hitMap.get(path);
+    if (matchingScore !== undefined) {
+      if (score > matchingScore) {
+        hitMap.set(path, score);
       }
     } else {
-      hitMap.set(hit.document.path, hit.score);
+      hitMap.set(path, score);
     }
   }
   hitMap.delete(currentFilePath);
@@ -82,15 +91,15 @@ function getHighestScoreHits(hits: Result<InternalTypedDocument<any>>[], current
 }
 
 async function calculateSimilarityScore({
-  db,
+  provider,
   filePath,
 }: {
-  db: Orama<any>;
+  provider: DBProvider;
   filePath: string;
 }): Promise<Map<string, number>> {
   const debug = getSettings().debug;
 
-  const currentNoteEmbeddings = await getNoteEmbeddings(filePath, db);
+  const currentNoteEmbeddings = await getNoteEmbeddings(filePath, provider);
   const averageEmbedding = getAverageEmbedding(currentNoteEmbeddings);
   if (averageEmbedding.length === 0) {
     if (debug) {
@@ -99,11 +108,31 @@ async function calculateSimilarityScore({
     return new Map();
   }
 
-  const hits = await DBOperations.getDocsByEmbedding(db, averageEmbedding, {
-    limit: MAX_K,
-    similarity: MIN_SIMILARITY_SCORE,
-  });
-  return getHighestScoreHits(hits, filePath);
+  try {
+    const searchOptions = {
+      limit: MAX_K,
+      similarity: MIN_SIMILARITY_SCORE,
+    };
+
+    const results = await provider.getDocsByEmbedding(averageEmbedding, searchOptions);
+
+    // Convert to Document format for compatibility
+    const documents = results.map(
+      (doc) =>
+        new Document({
+          pageContent: doc.content,
+          metadata: {
+            path: doc.path,
+            score: 1.0, // Default score, we'll need to calculate actual similarity
+          },
+        })
+    );
+
+    return getHighestScoreHits(documents, filePath);
+  } catch (error) {
+    console.error(`Error searching by embedding for file ${filePath}:`, error);
+    return new Map();
+  }
 }
 
 function getNoteLinks(file: TFile) {
@@ -164,18 +193,19 @@ export type RelevantNoteEntry = {
     hasBacklinks: boolean;
   };
 };
+
 /**
  * Finds the relevant notes for the given file path.
- * @param db - The Orama database.
+ * @param provider - The vector database provider.
  * @param filePath - The file path to find relevant notes for.
  * @returns The relevant notes hits for the given file path. Empty array if no
  *   relevant notes are found or the index does not exist.
  */
 export async function findRelevantNotes({
-  db,
+  provider,
   filePath,
 }: {
-  db: Orama<any>;
+  provider: DBProvider;
   filePath: string;
 }): Promise<RelevantNoteEntry[]> {
   const file = app.vault.getAbstractFileByPath(filePath);
@@ -183,7 +213,7 @@ export async function findRelevantNotes({
     return [];
   }
 
-  const similarityScoreMap = await calculateSimilarityScore({ db, filePath });
+  const similarityScoreMap = await calculateSimilarityScore({ provider, filePath });
   const noteLinks = getNoteLinks(file);
   const mergedScoreMap = mergeScoreMaps(similarityScoreMap, noteLinks);
   const sortedHits = Array.from(mergedScoreMap.entries()).sort((a, b) => {
@@ -217,7 +247,7 @@ export async function findRelevantNotes({
         },
       };
     })
-    .filter((entry) => entry !== null);
+    .filter((entry): entry is RelevantNoteEntry => entry !== null);
 }
 
 /**

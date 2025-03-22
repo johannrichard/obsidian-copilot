@@ -89,6 +89,15 @@ export interface CopilotSettings {
   // undefined means never checked
   isPlusUser: boolean | undefined;
   inlineEditCommands: InlineEditCommandSettings[] | undefined;
+  // Vector database provider type (orama, cloudflare, etc.)
+  vectorDbType: string;
+  // Cloudflare Vectorize settings
+  cloudflareApiToken: string;
+  cloudflareAccountId: string;
+  // Qdrant settings
+  qdrantUrl: string;
+  qdrantApiKey: string;
+  qdrantCollectionName: string;
 }
 
 export const settingsStore = createStore();

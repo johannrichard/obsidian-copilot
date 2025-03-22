@@ -323,7 +323,7 @@ export function registerCommands(
       const filesWithoutEmbeddings = new Set<string>();
 
       // Get dbOps for checking embeddings
-      const dbOps = await plugin.vectorStoreManager.getDbOps();
+      const dbOps = await plugin.vectorStoreManager.getDbProvider();
 
       // Categorize files
       for (const file of allMarkdownFiles) {
@@ -400,7 +400,7 @@ export function registerCommands(
 
   addCommand(plugin, COMMAND_IDS.REMOVE_FILES_FROM_COPILOT_INDEX, async () => {
     new RemoveFromIndexModal(plugin.app, async (filePaths: string[]) => {
-      const dbOps = await plugin.vectorStoreManager.getDbOps();
+      const dbOps = await plugin.vectorStoreManager.getDbProvider();
       try {
         for (const path of filePaths) {
           await dbOps.removeDocs(path);

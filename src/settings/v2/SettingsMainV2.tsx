@@ -12,6 +12,7 @@ import { AdvancedSettings } from "./components/AdvancedSettings";
 import { BasicSettings } from "./components/BasicSettings";
 import { ModelSettings } from "./components/ModelSettings";
 import { QASettings } from "./components/QASettings";
+import { VectorDBSettings } from "./components/VectorDBSettings";
 
 const TAB_IDS = ["basic", "model", "QA", "command", "advanced"] as const;
 type TabId = (typeof TAB_IDS)[number];
@@ -31,7 +32,12 @@ const components: Record<TabId, React.FC> = {
   model: () => <ModelSettings />,
   QA: () => <QASettings />,
   command: () => <CommandSettings />,
-  advanced: () => <AdvancedSettings />,
+  advanced: () => (
+    <>
+      <VectorDBSettings />
+      <AdvancedSettings />
+    </>
+  ),
 };
 
 // tabs

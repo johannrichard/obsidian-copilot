@@ -2,7 +2,6 @@ import { BrevilabsClient } from "@/LLMProviders/brevilabsClient";
 import ChatModelManager from "@/LLMProviders/chatModelManager";
 import EmbeddingManager from "@/LLMProviders/embeddingManager";
 import { logInfo } from "@/logger";
-import VectorStoreManager from "@/search/vectorStoreManager";
 import { getSettings } from "@/settings/model";
 import { extractNoteFiles, removeThinkTags } from "@/utils";
 import { BaseCallbackConfig } from "@langchain/core/callbacks/manager";
@@ -10,9 +9,8 @@ import { Document } from "@langchain/core/documents";
 import { BaseChatModelCallOptions } from "@langchain/core/language_models/chat_models";
 import { ChatPromptTemplate } from "@langchain/core/prompts";
 import { BaseRetriever } from "@langchain/core/retrievers";
-import { search } from "@orama/orama";
 import { TFile } from "obsidian";
-import { DBOperations } from "./dbOperations";
+import { VectorSearchService } from "./vectorSearchService";
 
 export class HybridRetriever extends BaseRetriever {
   public lc_namespace = ["hybrid_retriever"];
@@ -56,13 +54,13 @@ export class HybridRetriever extends BaseRetriever {
       rewrittenQuery = await this.rewriteQuery(query);
     }
     // Pass enhanced salient terms to include titles
-    const oramaChunks = await this.getOramaChunks(
+    const vectorChunks = await this.getVectorChunks(
       rewrittenQuery,
       enhancedSalientTerms,
       this.options.textWeight
     );
 
-    const combinedChunks = this.filterAndFormatChunks(oramaChunks, explicitChunks);
+    const combinedChunks = this.filterAndFormatChunks(vectorChunks, explicitChunks);
 
     let finalChunks = combinedChunks;
 
@@ -114,7 +112,7 @@ export class HybridRetriever extends BaseRetriever {
       }
 
       console.log("\nExplicit Chunks: ", explicitChunks);
-      console.log("Orama Chunks: ", oramaChunks);
+      console.log("Vector Chunks: ", vectorChunks);
       console.log("Combined Chunks: ", combinedChunks);
       console.log("Max Orama Score: ", maxOramaScore);
       if (shouldRerank) {
@@ -149,215 +147,102 @@ export class HybridRetriever extends BaseRetriever {
   }
 
   private async getExplicitChunks(noteFiles: TFile[]): Promise<Document[]> {
+    if (noteFiles.length === 0) {
+      return [];
+    }
+
     const explicitChunks: Document[] = [];
-    for (const noteFile of noteFiles) {
-      const db = await VectorStoreManager.getInstance().getDb();
-      const hits = await DBOperations.getDocsByPath(db, noteFile.path);
-      if (hits) {
-        const matchingChunks = hits.map(
-          (hit: any) =>
-            new Document({
-              pageContent: hit.document.content,
-              metadata: {
-                ...hit.document.metadata,
-                score: hit.score,
-                path: hit.document.path,
-                mtime: hit.document.mtime,
-                ctime: hit.document.ctime,
-                title: hit.document.title,
-                id: hit.document.id,
-                embeddingModel: hit.document.embeddingModel,
-                tags: hit.document.tags,
-                extension: hit.document.extension,
-                created_at: hit.document.created_at,
-                nchars: hit.document.nchars,
-              },
-            })
-        );
-        explicitChunks.push(...matchingChunks);
+
+    // Use VectorSearchService to get documents by path
+    const searchService = VectorSearchService.getInstance(app);
+
+    for (const file of noteFiles) {
+      try {
+        const docs = await searchService.searchByPath(file.path);
+        if (docs.length > 0) {
+          // Add includeInContext flag to metadata
+          const docsWithContext = docs.map((doc) => ({
+            ...doc,
+            metadata: {
+              ...doc.metadata,
+              includeInContext: true,
+            },
+          }));
+          explicitChunks.push(...docsWithContext);
+        }
+      } catch (error) {
+        console.error(`Error getting chunks for file ${file.path}:`, error);
       }
     }
+
     return explicitChunks;
   }
 
-  // Orama does not support OR for filters, so we need to manually combine the results from the two queries
-  // https://github.com/orgs/askorama/discussions/670
-  public async getOramaChunks(
+  public async getVectorChunks(
     query: string,
     salientTerms: string[],
     textWeight?: number
   ): Promise<Document[]> {
-    let queryVector: number[];
     try {
-      queryVector = await this.convertQueryToVector(query);
+      // Use the VectorSearchService instead of direct Orama search
+      const searchService = VectorSearchService.getInstance(app);
+
+      // Set up search options
+      const searchOptions = {
+        limit: this.options.maxK,
+        similarity: this.options.minSimilarityScore,
+        includeMetadata: true,
+        salientTerms: salientTerms,
+      };
+
+      // If we have a time range, we need to handle it separately
+      if (this.options.timeRange) {
+        const { startTime, endTime } = this.options.timeRange;
+
+        // Generate daily note date range
+        const dailyNotes = this.generateDailyNoteDateRange(startTime, endTime);
+        logInfo(
+          "==== Daily note date range: ====",
+          dailyNotes[0],
+          dailyNotes[dailyNotes.length - 1]
+        );
+
+        // Get documents for daily notes
+        const dailyNoteFiles = extractNoteFiles(dailyNotes.join(", "), app.vault);
+        const dailyNoteResults = await this.getExplicitChunks(dailyNoteFiles);
+
+        // Set includeInContext to true for all dailyNoteResults
+        const dailyNoteResultsWithContext = dailyNoteResults.map((doc) => ({
+          ...doc,
+          metadata: {
+            ...doc.metadata,
+            includeInContext: true,
+          },
+        }));
+
+        // Perform the search
+        const searchResults = await searchService.searchByText(query, searchOptions);
+
+        // Filter results by time range
+        const timeFilteredResults = searchResults.filter(
+          (doc) => doc.metadata.mtime >= startTime && doc.metadata.mtime <= endTime
+        );
+
+        // Combine and deduplicate results
+        const combinedResults = [...dailyNoteResultsWithContext, ...timeFilteredResults];
+        const uniqueResults = Array.from(
+          new Set(combinedResults.map((doc) => (doc.metadata as any).id))
+        ).map((id) => combinedResults.find((doc) => (doc.metadata as any).id === id));
+
+        return uniqueResults.filter((doc): doc is Document => doc !== undefined);
+      }
+
+      // For regular searches without time range
+      return await searchService.searchByText(query, searchOptions);
     } catch (error) {
-      console.error(
-        "Error in convertQueryToVector, please ensure your embedding model is working and has an adequate context length:",
-        error,
-        "\nQuery:",
-        query
-      );
+      console.error("Error in getVectorChunks:", error);
       throw error;
     }
-
-    const db = await VectorStoreManager.getInstance().getDb();
-
-    const searchParams: any = {
-      similarity: this.options.minSimilarityScore,
-      limit: this.options.maxK,
-      includeVectors: true,
-    };
-
-    if (salientTerms.length > 0) {
-      // Use hybrid mode when we have salient terms
-      let vectorWeight;
-      if (!textWeight) {
-        textWeight = 0.5;
-      }
-      vectorWeight = 1 - textWeight;
-
-      let tagOnlyQuery = true;
-      for (const term of salientTerms) {
-        if (!term.startsWith("#")) {
-          tagOnlyQuery = false;
-          break;
-        }
-      }
-
-      if (tagOnlyQuery) {
-        if (getSettings().debug) {
-          console.log("Tag only query detected, setting textWeight to 1 and vectorWeight to 0.");
-        }
-        textWeight = 1;
-        vectorWeight = 0;
-      }
-
-      searchParams.mode = "hybrid";
-      searchParams.term = salientTerms.join(" ");
-      searchParams.vector = {
-        value: queryVector,
-        property: "embedding",
-      };
-      searchParams.hybridWeights = {
-        text: textWeight,
-        vector: vectorWeight,
-      };
-    } else {
-      // Use vector mode when no salient terms
-      searchParams.mode = "vector";
-      searchParams.vector = {
-        value: queryVector,
-        property: "embedding",
-      };
-    }
-
-    // Add time range filter if provided
-    if (this.options.timeRange) {
-      const { startTime, endTime } = this.options.timeRange;
-
-      const dailyNotes = this.generateDailyNoteDateRange(startTime, endTime);
-
-      logInfo("==== Daily note date range: ====", dailyNotes[0], dailyNotes[dailyNotes.length - 1]);
-
-      // Perform the first search with title filter
-      const dailyNoteFiles = extractNoteFiles(dailyNotes.join(", "), app.vault);
-      const dailyNoteResults = await this.getExplicitChunks(dailyNoteFiles);
-
-      // Set includeInContext to true for all dailyNoteResults
-      const dailyNoteResultsWithContext = dailyNoteResults.map((doc) => ({
-        ...doc,
-        metadata: {
-          ...doc.metadata,
-          includeInContext: true,
-        },
-      }));
-
-      logInfo("==== Modified time range: ====", startTime, endTime);
-
-      // Perform a second search with time range filters
-      searchParams.where = {
-        mtime: { between: [startTime, endTime] },
-      };
-
-      const timeIntervalResults = await search(db, searchParams);
-
-      // Convert timeIntervalResults to Document objects
-      const timeIntervalDocuments = timeIntervalResults.hits.map(
-        (hit) =>
-          new Document({
-            pageContent: hit.document.content,
-            metadata: {
-              ...hit.document.metadata,
-              score: hit.score,
-              path: hit.document.path,
-              mtime: hit.document.mtime,
-              ctime: hit.document.ctime,
-              title: hit.document.title,
-              id: hit.document.id,
-              embeddingModel: hit.document.embeddingModel,
-              tags: hit.document.tags,
-              extension: hit.document.extension,
-              created_at: hit.document.created_at,
-              nchars: hit.document.nchars,
-            },
-          })
-      );
-
-      // Combine and deduplicate results
-      const combinedResults = [...dailyNoteResultsWithContext, ...timeIntervalDocuments];
-      const uniqueResults = Array.from(new Set(combinedResults.map((doc) => doc.metadata.id))).map(
-        (id) => combinedResults.find((doc) => doc.metadata.id === id)
-      );
-
-      return uniqueResults.filter((doc): doc is Document => doc !== undefined);
-    }
-
-    if (getSettings().debug) {
-      console.log("==== Orama Search Params: ====\n", searchParams);
-    }
-    const searchResults = await search(db, searchParams);
-
-    // Add null check and validation for search results
-    if (!searchResults || !searchResults.hits) {
-      console.warn("Search results or hits are undefined");
-      return [];
-    }
-
-    // Convert Orama search results to Document objects
-    return searchResults.hits
-      .map((hit) => {
-        if (!hit || !hit.document) {
-          console.warn("Invalid hit or document in search results");
-          return null;
-        }
-
-        if (typeof hit.score !== "number" || isNaN(hit.score)) {
-          console.warn("NaN/invalid score detected:", {
-            score: hit.score,
-            path: hit.document.path,
-            title: hit.document.title,
-          });
-        }
-
-        return new Document({
-          pageContent: hit.document.content || "", // Add fallback for content
-          metadata: {
-            ...(hit.document.metadata || {}), // Add fallback for metadata
-            score: hit.score,
-            path: hit.document.path || "",
-            mtime: hit.document.mtime,
-            ctime: hit.document.ctime,
-            title: hit.document.title || "",
-            id: hit.document.id,
-            embeddingModel: hit.document.embeddingModel,
-            tags: hit.document.tags || [],
-            extension: hit.document.extension,
-            created_at: hit.document.created_at,
-            nchars: hit.document.nchars,
-          },
-        });
-      })
-      .filter((doc): doc is Document => doc !== null); // Filter out null documents
   }
 
   private async convertQueryToVector(query: string): Promise<number[]> {
@@ -383,10 +268,10 @@ export class HybridRetriever extends BaseRetriever {
     return dailyNotes;
   }
 
-  private filterAndFormatChunks(oramaChunks: Document[], explicitChunks: Document[]): Document[] {
+  private filterAndFormatChunks(vectorChunks: Document[], explicitChunks: Document[]): Document[] {
     const threshold = this.options.minSimilarityScore;
     // Only filter out scores that are numbers and below threshold
-    const filteredOramaChunks = oramaChunks.filter((chunk) => {
+    const filteredVectorChunks = vectorChunks.filter((chunk) => {
       const score = chunk.metadata.score;
       if (typeof score !== "number" || isNaN(score)) {
         return true; // Keep chunks with NaN scores for now until we find out why
@@ -394,11 +279,11 @@ export class HybridRetriever extends BaseRetriever {
       return score >= threshold;
     });
 
-    // Combine explicit and filtered Orama chunks, removing duplicates while maintaining order
+    // Combine explicit and filtered Vector chunks, removing duplicates while maintaining order
     const uniqueChunks = new Set<string>(explicitChunks.map((chunk) => chunk.pageContent));
     const combinedChunks: Document[] = [...explicitChunks];
 
-    for (const chunk of filteredOramaChunks) {
+    for (const chunk of filteredVectorChunks) {
       const chunkContent = chunk.pageContent;
       if (!uniqueChunks.has(chunkContent)) {
         uniqueChunks.add(chunkContent);

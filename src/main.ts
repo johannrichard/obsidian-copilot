@@ -322,7 +322,7 @@ export default class CopilotPlugin extends Plugin {
       textWeight: textWeight,
     });
 
-    const results = await hybridRetriever.getOramaChunks(query, salientTerms);
+    const results = await hybridRetriever.getVectorChunks(query, salientTerms);
     return results.map((doc) => ({
       content: doc.pageContent,
       metadata: doc.metadata,

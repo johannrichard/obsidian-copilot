@@ -25,6 +25,8 @@ export const CHUNK_SIZE = 6000;
 export const CONTEXT_SCORE_THRESHOLD = 0.4;
 export const TEXT_WEIGHT = 0.4;
 export const PLUS_MODE_DEFAULT_SOURCE_CHUNKS = 15;
+export const VECTORIZE_BATCH_LIMIT = 5000; // Cloudflare API limit for batch operations
+export const METADATA_SAVE_INTERVAL = 4000; // Save metadata at most once per 2 seconds (in milliseconds)
 export const MAX_CHARS_FOR_LOCAL_SEARCH_CONTEXT = 448000;
 export const LOADING_MESSAGES = {
   DEFAULT: "",
@@ -492,6 +494,11 @@ export const DEFAULT_SETTINGS: CopilotSettings = {
   promptUsageTimestamps: {},
   defaultConversationNoteName: "{$topic}@{$date}_{$time}",
   inlineEditCommands: DEFAULT_INLINE_EDIT_COMMANDS,
+  vectorDbType: "orama",
+  cloudflareApiToken: "",
+  cloudflareAccountId: "",
+  qdrantUrl: "",
+  qdrantApiKey: "",
 };
 
 export const EVENT_NAMES = {

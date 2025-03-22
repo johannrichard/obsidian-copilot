@@ -7,7 +7,7 @@ import { formatDateTime } from "@/utils";
 import { MD5 } from "crypto-js";
 import { RecursiveCharacterTextSplitter } from "langchain/text_splitter";
 import { App, Notice, TFile } from "obsidian";
-import { DBOperations } from "./dbOperations";
+import { DBProvider } from "./dbProvider";
 import {
   extractAppIgnoreSettings,
   getDecodedPatterns,
@@ -41,7 +41,7 @@ export class IndexOperations {
 
   constructor(
     private app: App,
-    private dbOps: DBOperations,
+    private dbProvider: DBProvider,
     private embeddingsManager: EmbeddingsManager
   ) {
     const settings = getSettings();
@@ -69,7 +69,8 @@ export class IndexOperations {
       }
 
       // Check for model change first
-      const modelChanged = await this.dbOps.checkAndHandleEmbeddingModelChange(embeddingInstance);
+      const modelChanged =
+        await this.dbProvider.checkAndHandleEmbeddingModelChange(embeddingInstance);
       if (modelChanged) {
         // If model changed, force a full reindex by setting overwrite to true
         overwrite = true;
@@ -77,11 +78,11 @@ export class IndexOperations {
 
       // Clear index and tracking if overwrite is true
       if (overwrite) {
-        await this.dbOps.clearIndex(embeddingInstance);
-        this.dbOps.clearFilesMissingEmbeddings();
+        await this.dbProvider.recreateIndex(embeddingInstance);
+        this.dbProvider.clearFilesMissingEmbeddings();
       } else {
         // Run garbage collection first to clean up stale documents
-        await this.dbOps.garbageCollect();
+        await this.dbProvider.garbageCollect();
       }
 
       const files = await this.getFilesToIndex(overwrite);
@@ -94,7 +95,7 @@ export class IndexOperations {
       this.createIndexingNotice();
 
       // Clear the missing embeddings list before starting new indexing
-      this.dbOps.clearFilesMissingEmbeddings();
+      this.dbProvider.clearFilesMissingEmbeddings();
 
       // New: Prepare all chunks first
       const allChunks = await this.prepareAllChunks(files);
@@ -130,19 +131,22 @@ export class IndexOperations {
             // Skip documents with invalid embeddings
             if (!embedding || !Array.isArray(embedding) || embedding.length === 0) {
               logError(`Invalid embedding for document ${chunk.fileInfo.path}: ${embedding}`);
-              this.dbOps.markFileMissingEmbeddings(chunk.fileInfo.path);
+              this.dbProvider.markFileMissingEmbeddings(chunk.fileInfo.path);
               continue;
             }
 
             try {
-              await this.dbOps.upsert({
-                ...chunk.fileInfo,
-                id: this.getDocHash(chunk.content),
-                content: chunk.content,
-                embedding,
-                created_at: Date.now(),
-                nchars: chunk.content.length,
-              });
+              await this.dbProvider.upsert(
+                {
+                  ...chunk.fileInfo,
+                  id: this.getDocHash(chunk.content),
+                  content: chunk.content,
+                  embedding,
+                  created_at: Date.now(),
+                  nchars: chunk.content.length,
+                },
+                false
+              );
               // Mark success for this file
               this.state.processedFiles.add(chunk.fileInfo.path);
             } catch (err) {
@@ -151,7 +155,7 @@ export class IndexOperations {
                 filePath: chunk.fileInfo.path,
                 errors,
               });
-              this.dbOps.markFileMissingEmbeddings(chunk.fileInfo.path);
+              this.dbProvider.markFileMissingEmbeddings(chunk.fileInfo.path);
               continue;
             }
           }
@@ -167,7 +171,7 @@ export class IndexOperations {
           const currentCheckpoint = Math.floor(this.state.indexedCount / this.checkpointInterval);
 
           if (currentCheckpoint > previousCheckpoint) {
-            await this.dbOps.saveDB();
+            await this.dbProvider.saveDB();
             console.log("Copilot index checkpoint save completed.");
           }
         } catch (err) {
@@ -183,11 +187,11 @@ export class IndexOperations {
       }
 
       this.finalizeIndexing(errors);
-      await this.dbOps.saveDB();
+      await this.dbProvider.saveDB();
       console.log("Copilot index final save completed.");
 
       // Run integrity check in the background
-      this.dbOps.checkIndexIntegrity().catch((err) => {
+      this.dbProvider.checkIndexIntegrity().catch((err) => {
         logError("Background integrity check failed:", err);
       });
 
@@ -274,9 +278,9 @@ export class IndexOperations {
     }
 
     // Get currently indexed files and latest mtime
-    const indexedFilePaths = new Set(await this.dbOps.getIndexedFiles());
-    const latestMtime = await this.dbOps.getLatestFileMtime();
-    const filesMissingEmbeddings = new Set(this.dbOps.getFilesMissingEmbeddings());
+    const indexedFilePaths = new Set(await this.dbProvider.getIndexedFiles());
+    const latestMtime = await this.dbProvider.getLatestFileMtime();
+    const filesMissingEmbeddings = new Set(this.dbProvider.getFilesMissingEmbeddings());
 
     // Get all markdown files that should be indexed under current rules
     const filesToIndex = new Set<TFile>();
@@ -527,10 +531,11 @@ export class IndexOperations {
         return;
       }
 
-      await this.dbOps.removeDocs(file.path);
+      await this.dbProvider.removeDocs(file.path);
 
       // Check for model change
-      const modelChanged = await this.dbOps.checkAndHandleEmbeddingModelChange(embeddingInstance);
+      const modelChanged =
+        await this.dbProvider.checkAndHandleEmbeddingModelChange(embeddingInstance);
       if (modelChanged) {
         await this.indexVaultToVectorStore(true);
         return;
@@ -545,21 +550,24 @@ export class IndexOperations {
         chunks.map((chunk) => chunk.content)
       );
 
-      // Save to database
+      // Upsert and commit
       for (let i = 0; i < chunks.length; i++) {
         const chunk = chunks[i];
-        await this.dbOps.upsert({
-          ...chunk.fileInfo,
-          id: this.getDocHash(chunk.content),
-          content: chunk.content,
-          embedding: embeddings[i],
-          created_at: Date.now(),
-          nchars: chunk.content.length,
-        });
+        await this.dbProvider.upsert(
+          {
+            ...chunk.fileInfo,
+            id: this.getDocHash(chunk.content),
+            content: chunk.content,
+            embedding: embeddings[i],
+            created_at: Date.now(),
+            nchars: chunk.content.length,
+          },
+          true
+        );
       }
 
       // Mark that we have unsaved changes instead of saving immediately
-      this.dbOps.markUnsavedChanges();
+      this.dbProvider.markUnsavedChanges();
 
       if (getSettings().debug) {
         console.log(`Reindexed file: ${file.path}`);

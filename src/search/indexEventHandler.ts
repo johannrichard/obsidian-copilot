@@ -2,9 +2,9 @@ import { getChainType } from "@/aiParams";
 import { ChainType } from "@/chainFactory";
 import { getSettings } from "@/settings/model";
 import { App, MarkdownView, Platform, TAbstractFile, TFile } from "obsidian";
-import { DBOperations } from "./dbOperations";
 import { IndexOperations } from "./indexOperations";
 import { getMatchingPatterns, shouldIndexFile } from "./searchUtils";
+import { DBProvider } from "./dbProvider";
 
 const DEBOUNCE_DELAY = 5000; // 5 seconds
 
@@ -16,7 +16,7 @@ export class IndexEventHandler {
   constructor(
     private app: App,
     private indexOps: IndexOperations,
-    private dbOps: DBOperations
+    private dbProvider: DBProvider
   ) {
     this.initializeEventListeners();
   }
@@ -88,7 +88,7 @@ export class IndexEventHandler {
 
   private handleFileDelete = async (file: TAbstractFile) => {
     if (file instanceof TFile) {
-      await this.dbOps.removeDocs(file.path);
+      await this.dbProvider.removeDocs(file.path);
     }
   };
 

@@ -1,5 +1,5 @@
 import CopilotPlugin from "@/main";
-import { search } from "@orama/orama";
+import { VectorSearchService } from "@/search/vectorSearchService";
 import { App, Modal, Notice, TFile } from "obsidian";
 
 export class DebugSearchModal extends Modal {
@@ -15,7 +15,7 @@ export class DebugSearchModal extends Modal {
     const { contentEl } = this;
     contentEl.empty();
 
-    contentEl.createEl("h2", { text: "Debug: Search OramaDB" });
+    contentEl.createEl("h2", { text: "Debug: Search Vector DB" });
 
     // Add description
     const descEl = contentEl.createEl("p");
@@ -52,13 +52,51 @@ export class DebugSearchModal extends Modal {
           searchParams.vector.value = Object.values(searchParams.vector.value);
         }
 
-        const db = await this.plugin.vectorStoreManager.getDb();
-        if (!db) {
-          new Notice("Database not found");
+        // Use VectorSearchService instead of direct Orama search
+        const searchService = VectorSearchService.getInstance(this.app);
+
+        // Initialize the search service
+        await searchService.initialize();
+
+        let searchResults;
+
+        if (searchParams.mode === "vector" || searchParams.mode === "hybrid") {
+          // For vector or hybrid search, use searchByText
+          const embedding = searchParams.vector?.value;
+          if (!embedding) {
+            new Notice("No embedding vector provided");
+            return;
+          }
+
+          const options = {
+            limit: searchParams.limit || 10,
+            similarity: searchParams.similarity || 0.4,
+            includeMetadata: true,
+            salientTerms: searchParams.term ? searchParams.term.split(" ") : [],
+          };
+
+          // Use the provider directly for more control
+          const provider = searchService.getProvider();
+          searchResults = await provider.getDocsByEmbedding(embedding, {
+            limit: options.limit,
+            similarity: options.similarity,
+          });
+
+          // Format results to match Orama format for backward compatibility
+          searchResults = {
+            hits: searchResults.map((doc) => ({
+              document: doc,
+              score: 1.0, // Default score
+            })),
+            elapsed: 0,
+            count: searchResults.length,
+            limit: options.limit,
+          };
+        } else {
+          // For text search, we'll need to use a different approach
+          new Notice("Only vector and hybrid search modes are supported in this version");
           return;
         }
-
-        const searchResults = await search(db, searchParams);
 
         // Create content for the results file
         const content = [
@@ -77,7 +115,7 @@ export class DebugSearchModal extends Modal {
         ].join("\n");
 
         // Create or update the file
-        const fileName = `OramaDB-Debug-Search.md`;
+        const fileName = `VectorDB-Debug-Search.md`;
 
         const existingFile = this.app.vault.getAbstractFileByPath(fileName);
         if (existingFile instanceof TFile) {
