@@ -29,14 +29,15 @@ export class QdrantDBProvider extends BaseCloudDBProvider {
       // Handle mobile index loading setting change
       if (Platform.isMobile && settings.disableIndexOnMobile) {
         this.isInitialized = false;
-      } else if (Platform.isMobile && !settings.disableIndexOnMobile && !this.isInitialized) {
-        // Re-initialize DB if mobile setting is enabled
-        this.collectionName =
-          settings.qdrantCollectionName && settings.qdrantCollectionName.trim() !== ""
-            ? settings.qdrantCollectionName.trim()
-            : this.getVaultIdentifier();
-
-        await this.initializeDB(await EmbeddingsManager.getInstance().getEmbeddingsAPI());
+      } else {
+        // Validate if any of the qdrant settings changed and then reinitialise the index
+        if (
+          !this.isInitialized ||
+          settings.qdrantApiKey != this.qdrantApiKey ||
+          settings.qdrantCollectionName != this.collectionName ||
+          settings.qdrantUrl != this.baseUrl
+        )
+          await this.initializeDB(await EmbeddingsManager.getInstance().getEmbeddingsAPI());
       }
     });
   }
@@ -48,9 +49,12 @@ export class QdrantDBProvider extends BaseCloudDBProvider {
     this.embeddingInstance = embeddingInstance;
     this.embeddingModelName = EmbeddingsManager.getModelName(embeddingInstance);
     this.vectorLength = await getVectorLength(embeddingInstance);
-    const qdrantHost = settings.qdrantUrl || "";
     this.qdrantApiKey = settings.qdrantApiKey || "";
-    this.baseUrl = `${qdrantHost}`; // Adjust as needed
+    this.collectionName =
+      settings.qdrantCollectionName && settings.qdrantCollectionName.trim() !== ""
+        ? settings.qdrantCollectionName.trim()
+        : this.getVaultIdentifier();
+    this.baseUrl = settings.qdrantUrl || ""; // Adjust as needed
     this.collectionBaseUrl = `${this.baseUrl}/collections/${this.collectionName}`.replace(
       /(?<!http:|https:)\/\//g,
       "/"
