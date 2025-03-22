@@ -48,7 +48,7 @@ export class QdrantDBProvider extends BaseCloudDBProvider {
     this.embeddingInstance = embeddingInstance;
     this.embeddingModelName = EmbeddingsManager.getModelName(embeddingInstance);
     this.vectorLength = await getVectorLength(embeddingInstance);
-    const qdrantHost = settings.qdrantUrl || "http://localhost:6333";
+    const qdrantHost = settings.qdrantUrl || "";
     this.qdrantApiKey = settings.qdrantApiKey || "";
     this.baseUrl = `${qdrantHost}`; // Adjust as needed
     this.collectionBaseUrl = `${this.baseUrl}/collections/${this.collectionName}`;
@@ -325,6 +325,7 @@ export class QdrantDBProvider extends BaseCloudDBProvider {
   }
 
   protected async collectionExists(): Promise<boolean> {
+    logInfo(`Check if Qdrant collection ${this.collectionName} exists`);
     try {
       const url = `${this.collectionBaseUrl}/exists`;
       const response = await requestUrl({

@@ -395,14 +395,9 @@ export abstract class BaseCloudDBProvider implements DBProvider {
    */
   public async isIndexEmpty(): Promise<boolean> {
     // If we have pending documents or metadata, the index is not empty
+    logInfo("Checking if index is empty");
     if (this.pendingDocuments.length > 0 || Object.keys(this.metadataCache).length > 0) {
       return false;
-    }
-
-    // If we're not initialized, we can't check the cloud index
-    if (!this.isInitialized) {
-      // If we have no pending documents and no metadata, assume empty
-      return true;
     }
 
     // Check the cloud index

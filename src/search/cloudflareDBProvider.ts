@@ -587,49 +587,6 @@ export class CloudflareDBProvider extends BaseCloudDBProvider {
     }
   }
 
-  async isIndexEmpty(): Promise<boolean> {
-    // Try to ensure we're initialized, but don't block if not
-    await this.ensureInitialized();
-
-    try {
-      // First check if there are any pending documents
-      if (this.pendingDocuments.length > 0) {
-        return false;
-      }
-
-      // Check if there are any documents in the metadata cache
-      if (Object.keys(this.metadataCache).length > 0) {
-        return false;
-      }
-
-      // If not initialized, we can only check local data
-      if (!this.isInitialized) {
-        // If no pending documents and no metadata, assume empty
-        return true;
-      }
-
-      // Get index info from Cloudflare API
-      const response = await requestUrl({
-        url: `${this.indexUrl}/info`,
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${this.cloudflareApiToken}`,
-        },
-      });
-
-      if (!response.json.success) {
-        throw new Error("Failed to get index info from Cloudflare");
-      }
-
-      const vectorCount = response.json.result.count;
-      return vectorCount === 0;
-    } catch (error) {
-      logError("Error checking if index is empty in Cloudflare Vectorize:", error);
-      // If we can't check, assume it's empty
-      return true;
-    }
-  }
-
   async hasDocument(path: string): Promise<boolean> {
     // Try to ensure we're initialized, but don't block if not
     await this.ensureInitialized();
