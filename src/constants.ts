@@ -499,6 +499,7 @@ export const DEFAULT_SETTINGS: CopilotSettings = {
   cloudflareAccountId: "",
   qdrantUrl: "",
   qdrantApiKey: "",
+  qdrantCollectionName: "",
 };
 
 export const EVENT_NAMES = {
