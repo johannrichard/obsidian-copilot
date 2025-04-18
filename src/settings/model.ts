@@ -1,5 +1,6 @@
 import { CustomModel } from "@/aiParams";
 import { atom, createStore, useAtomValue } from "jotai";
+import { v4 as uuidv4 } from "uuid";
 
 import { type ChainType } from "@/chainFactory";
 import {
@@ -36,6 +37,7 @@ export interface InlineEditCommandSettings {
 }
 
 export interface CopilotSettings {
+  userId: string;
   plusLicenseKey: string;
   openAIApiKey: string;
   openAIOrgId: string;
@@ -50,12 +52,14 @@ export interface CopilotSettings {
   googleApiKey: string;
   openRouterAiApiKey: string;
   mistralApiKey: string;
+  deepseekApiKey: string;
   defaultChainType: ChainType;
   defaultModelKey: string;
   embeddingModelKey: string;
   temperature: number;
   maxTokens: number;
   contextTurns: number;
+  lastDismissedVersion: string | null;
   // Do not use this directly, use getSystemPrompt() instead
   userSystemPrompt: string;
   openAIProxyBaseUrl: string;
@@ -161,6 +165,10 @@ export function useSettingsValue(): Readonly<CopilotSettings> {
 export function sanitizeSettings(settings: CopilotSettings): CopilotSettings {
   // If settings is null/undefined, use DEFAULT_SETTINGS
   const settingsToSanitize = settings || DEFAULT_SETTINGS;
+
+  if (!settingsToSanitize.userId) {
+    settingsToSanitize.userId = uuidv4();
+  }
 
   // fix: Maintain consistency between EmbeddingModelProviders.AZURE_OPENAI and ChatModelProviders.AZURE_OPENAI,
   // where it was 'azure_openai' before EmbeddingModelProviders.AZURE_OPENAI.

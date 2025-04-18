@@ -1,7 +1,8 @@
 import { CustomModel } from "@/aiParams";
+import { DEFAULT_INLINE_EDIT_COMMANDS } from "@/commands/constants";
 import { type CopilotSettings } from "@/settings/model";
 import { ChainType } from "./chainFactory";
-import { DEFAULT_INLINE_EDIT_COMMANDS } from "@/commands/constants";
+import { v4 as uuidv4 } from "uuid";
 
 export const BREVILABS_API_BASE_URL = "https://api.brevilabs.com/v1";
 export const CHAT_VIEWTYPE = "copilot-chat-view";
@@ -17,8 +18,9 @@ export const DEFAULT_SYSTEM_PROMPT = `You are Obsidian Copilot, a helpful assist
   7. When showing note titles, use [[title]] format and do not wrap them in \` \`.
   8. When showing **Obsidian internal** image links, use ![[link]] format and do not wrap them in \` \`.
   9. When showing **web** image links, use ![link](url) format and do not wrap them in \` \`.
-  10. Always respond in the language of the user's query.
-  11. Do NOT mention the additional context provided such as getCurrentTime and getTimeRangeMs if it's irrelevant to the user message.`;
+  10. When generating a table, use compact formatting without excessive whitespace.
+  11. Always respond in the language of the user's query.
+  12. Do NOT mention the additional context provided such as getCurrentTime and getTimeRangeMs if it's irrelevant to the user message.`;
 export const EMPTY_INDEX_ERROR_MESSAGE =
   "Copilot index does not exist. Please index your vault first!\n\n1. Set a working embedding model in QA settings. If it's not a local model, don't forget to set the API key. \n\n2. Click 'Refresh Index for Vault' and wait for indexing to complete. If you encounter the rate limiting error, please turn your request per second down in QA setting.";
 export const CHUNK_SIZE = 6000;
@@ -56,11 +58,14 @@ export enum ChatModels {
   OPENROUTER_GPT_4o = "openai/chatgpt-4o-latest",
   GROQ_LLAMA_8b = "llama3-8b-8192",
   MISTRAL_TINY = "mistral-tiny-latest",
+  DEEPSEEK_REASONER = "deepseek-reasoner",
+  DEEPSEEK_CHAT = "deepseek-chat",
 }
 
 // Model Providers
 export enum ChatModelProviders {
   OPENAI = "openai",
+  OPENAI_FORMAT = "3rd party (openai-format)",
   AZURE_OPENAI = "azure openai",
   ANTHROPIC = "anthropic",
   COHEREAI = "cohereai",
@@ -69,9 +74,9 @@ export enum ChatModelProviders {
   GROQ = "groq",
   OLLAMA = "ollama",
   LM_STUDIO = "lm-studio",
-  OPENAI_FORMAT = "3rd party (openai-format)",
   COPILOT_PLUS = "copilot-plus",
   MISTRAL = "mistralai",
+  DEEPSEEK = "deepseek",
 }
 
 export enum ModelCapability {
@@ -93,6 +98,7 @@ export const BUILTIN_CHAT_MODELS: CustomModel[] = [
     enabled: true,
     isBuiltIn: true,
     core: true,
+    plusExclusive: true,
     capabilities: [ModelCapability.VISION],
   },
   {
@@ -171,6 +177,19 @@ export const BUILTIN_CHAT_MODELS: CustomModel[] = [
     enabled: true,
     isBuiltIn: true,
   },
+  {
+    name: ChatModels.DEEPSEEK_CHAT,
+    provider: ChatModelProviders.DEEPSEEK,
+    enabled: true,
+    isBuiltIn: true,
+  },
+  {
+    name: ChatModels.DEEPSEEK_REASONER,
+    provider: ChatModelProviders.DEEPSEEK,
+    enabled: true,
+    isBuiltIn: true,
+    capabilities: [ModelCapability.REASONING],
+  },
 ];
 
 export enum EmbeddingModelProviders {
@@ -205,6 +224,7 @@ export const BUILTIN_EMBEDDING_MODELS: CustomModel[] = [
     isBuiltIn: true,
     isEmbeddingModel: true,
     core: true,
+    plusExclusive: true,
   },
   {
     name: EmbeddingModels.COPILOT_PLUS_LARGE,
@@ -213,6 +233,7 @@ export const BUILTIN_EMBEDDING_MODELS: CustomModel[] = [
     isBuiltIn: true,
     isEmbeddingModel: true,
     core: true,
+    plusExclusive: true,
     believerExclusive: true,
     dimensions: 1024,
   },
@@ -223,6 +244,7 @@ export const BUILTIN_EMBEDDING_MODELS: CustomModel[] = [
     isBuiltIn: true,
     isEmbeddingModel: true,
     core: true,
+    plusExclusive: true,
     dimensions: 512,
   },
   {
@@ -349,6 +371,12 @@ export const ProviderInfo: Record<Provider, ProviderMetadata> = {
     keyManagementURL: "https://console.mistral.ai/api-keys",
     testModel: ChatModels.MISTRAL_TINY,
   },
+  [ChatModelProviders.DEEPSEEK]: {
+    label: "DeepSeek",
+    host: "https://api.deepseek.com/",
+    keyManagementURL: "https://platform.deepseek.com/api-keys",
+    testModel: ChatModels.DEEPSEEK_CHAT,
+  },
   [EmbeddingModelProviders.COPILOT_PLUS]: {
     label: "Copilot Plus",
     host: "https://api.brevilabs.com/v1",
@@ -372,6 +400,7 @@ export const ProviderSettingsKeyMap: Record<SettingKeyProviders, keyof CopilotSe
   cohereai: "cohereApiKey",
   "copilot-plus": "plusLicenseKey",
   mistralai: "mistralApiKey",
+  deepseek: "deepseekApiKey",
 };
 
 export enum VAULT_VECTOR_STORE_STRATEGY {
@@ -441,6 +470,7 @@ export const COMMAND_NAMES: Record<CommandId, string> = {
 export type CommandId = (typeof COMMAND_IDS)[keyof typeof COMMAND_IDS];
 
 export const DEFAULT_SETTINGS: CopilotSettings = {
+  userId: uuidv4(),
   isPlusUser: false,
   plusLicenseKey: "",
   openAIApiKey: "",
@@ -455,6 +485,8 @@ export const DEFAULT_SETTINGS: CopilotSettings = {
   azureOpenAIApiEmbeddingDeploymentName: "",
   googleApiKey: "",
   openRouterAiApiKey: "",
+  mistralApiKey: "",
+  deepseekApiKey: "",
   defaultChainType: ChainType.LLM_CHAIN,
   defaultModelKey: ChatModels.GPT_4o + "|" + ChatModelProviders.OPENAI,
   embeddingModelKey: EmbeddingModels.OPENAI_EMBEDDING_SMALL + "|" + EmbeddingModelProviders.OPENAI,
@@ -480,7 +512,6 @@ export const DEFAULT_SETTINGS: CopilotSettings = {
   enableEncryption: false,
   maxSourceChunks: 3,
   groqApiKey: "",
-  mistralApiKey: "",
   activeModels: BUILTIN_CHAT_MODELS,
   activeEmbeddingModels: BUILTIN_EMBEDDING_MODELS,
   embeddingRequestsPerMin: 90,
@@ -492,6 +523,7 @@ export const DEFAULT_SETTINGS: CopilotSettings = {
   promptUsageTimestamps: {},
   defaultConversationNoteName: "{$topic}@{$date}_{$time}",
   inlineEditCommands: DEFAULT_INLINE_EDIT_COMMANDS,
+  lastDismissedVersion: null,
 };
 
 export const EVENT_NAMES = {
